@@ -8,6 +8,7 @@ import com.itheima.reggie.utils.ValidateCodeUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import javax.servlet.http.HttpSession;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author Participate
@@ -27,6 +29,9 @@ import java.util.Map;
 public class UserController {
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private RedisTemplate redisTemplate;
     //获取验证码
     @PostMapping("/sendMsg")
     public R<String> sendMsg(HttpSession session, @RequestBody User user){
@@ -42,8 +47,9 @@ public class UserController {
             log.info("验证码为：" + code);
             //发送短信
             userService.sendMsg(email,subject,text);
-            //将验证码保存到session当中
-            session.setAttribute(email,code);
+
+            //将生成的验证码保存到Redis中，并保存有效期为5min
+            redisTemplate.opsForValue().set(email,code,5, TimeUnit.MINUTES);
             return R.success("验证码发送成功");
         }
         return R.error("验证码发送异常，请重新发送");
@@ -56,8 +62,9 @@ public class UserController {
         String phone = map.get("phone").toString();
         //获取验证码，用户输入的
         String code = map.get("code").toString();
-        //获取session中保存的验证码
-        Object sessionCode = session.getAttribute(phone);
+
+        //从Redis中获取缓存的验证码
+        Object sessionCode = redisTemplate.opsForValue().get(phone);
         //如果session的验证码和用户输入的验证码进行比对,&&同时
         if (sessionCode != null && sessionCode.equals(code)) {
             //要是User数据库没有这个邮箱则自动注册,先看看输入的邮箱是否存在数据库
@@ -76,6 +83,7 @@ public class UserController {
             }
             //不保存这个用户名就登不上去，因为过滤器需要得到这个user才能放行，程序才知道你登录了
             session.setAttribute("user", user.getId());
+            redisTemplate.delete(phone);
             return R.success(user);
         }
         return R.error("登录失败");
